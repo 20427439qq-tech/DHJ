@@ -17,7 +17,7 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [towers, setTowers] = useState<Tower[]>([]);
   const [cities, setCities] = useState<City[]>([]);
-  const [megaBombs, setMegaBombs] = useState(3);
+  const [megaBombs, setMegaBombs] = useState(99);
   
   // Game objects refs to avoid re-renders during animation loop
   const rocketsRef = useRef<Rocket[]>([]);
@@ -25,6 +25,7 @@ export default function App() {
   const explosionsRef = useRef<Explosion[]>([]);
   const requestRef = useRef<number>(null);
   const lastTimeRef = useRef<number>(0);
+  const lastFireTimeRef = useRef<number>(0);
 
   const initGame = useCallback(() => {
     const width = window.innerWidth;
@@ -50,7 +51,7 @@ export default function App() {
     setTowers(initialTowers);
     setCities(initialCities);
     setScore(0);
-    setMegaBombs(3);
+    setMegaBombs(99);
     rocketsRef.current = [];
     missilesRef.current = [];
     explosionsRef.current = [];
@@ -100,32 +101,30 @@ export default function App() {
       start: { x: startX, y: 0 },
       current: { x: startX, y: 0 },
       target: { x: target.x, y: target.y },
-      speed: 0.6 + Math.random() * 0.8 + (score / 2000), // Reduced speed as requested
+      speed: 0.3 + Math.random() * 0.4 + (score / 1000), // Starts slow, increases with score
       color: '#ff4444'
     };
 
     rocketsRef.current.push(newRocket);
   }, [gameState, cities, towers, score]);
 
-  const handleCanvasClick = (e: React.MouseEvent | React.TouchEvent) => {
+  const fireMissile = (x: number, y: number) => {
     if (gameState !== 'PLAYING') return;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const x = ('touches' in e) ? e.touches[0].clientX - rect.left : (e as React.MouseEvent).clientX - rect.left;
-    const y = ('touches' in e) ? e.touches[0].clientY - rect.top : (e as React.MouseEvent).clientY - rect.top;
+    // Throttle firing to avoid too many missiles (e.g., every 150ms)
+    const now = Date.now();
+    if (now - lastFireTimeRef.current < 150) return;
+    lastFireTimeRef.current = now;
 
     // Don't fire if clicking too low (near ground)
     if (y > window.innerHeight - 120) return;
 
-    // Find closest tower with ammo
+    // Find closest tower (Infinite ammo, so just check if not destroyed)
     let bestTower: Tower | null = null;
     let minDist = Infinity;
 
     towers.forEach(t => {
-      if (!t.destroyed && t.ammo > 0) {
+      if (!t.destroyed) {
         const dist = Math.abs(t.x - x);
         if (dist < minDist) {
           minDist = dist;
@@ -136,17 +135,32 @@ export default function App() {
 
     if (bestTower) {
       const tower = bestTower as Tower;
-      setTowers(prev => prev.map(t => t.id === tower.id ? { ...t, ammo: t.ammo - 1 } : t));
+      // Infinite ammo, so no decrementing
 
       const newMissile: Missile = {
         id: Math.random().toString(36).substr(2, 9),
         start: { x: tower.x, y: tower.y - 20 },
         current: { x: tower.x, y: tower.y - 20 },
         target: { x, y },
-        speed: 10
+        speed: 12
       };
       missilesRef.current.push(newMissile);
     }
+  };
+
+  const handleCanvasInteraction = (e: React.MouseEvent | React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = ('touches' in e) 
+      ? e.touches[0].clientX - rect.left 
+      : (e as React.MouseEvent).clientX - rect.left;
+    const y = ('touches' in e) 
+      ? e.touches[0].clientY - rect.top 
+      : (e as React.MouseEvent).clientY - rect.top;
+
+    fireMissile(x, y);
   };
 
   const update = (time: number) => {
@@ -156,7 +170,7 @@ export default function App() {
     lastTimeRef.current = time;
 
     // Spawn rockets periodically
-    if (Math.random() < 0.015 + (score / 15000)) {
+    if (Math.random() < 0.005 + (score / 5000)) {
       spawnRocket();
     }
 
@@ -242,7 +256,8 @@ export default function App() {
         const dx = rocket.current.x - exp.x;
         const dy = rocket.current.y - exp.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < exp.radius) {
+        // Increased collision radius for larger rockets
+        if (dist < exp.radius + 15) {
           setScore(s => s + ROCKET_SCORE);
           // Chain explosion
           explosionsRef.current.push({
@@ -409,19 +424,19 @@ export default function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Rocket head
+      // Rocket head (10x larger)
       ctx.fillStyle = '#ef4444';
       ctx.beginPath();
-      ctx.arc(rocket.current.x, rocket.current.y, 2, 0, Math.PI * 2);
+      ctx.arc(rocket.current.x, rocket.current.y, 20, 0, Math.PI * 2);
       ctx.fill();
       
-      // Rocket glow
-      const glow = ctx.createRadialGradient(rocket.current.x, rocket.current.y, 0, rocket.current.x, rocket.current.y, 6);
+      // Rocket glow (Larger)
+      const glow = ctx.createRadialGradient(rocket.current.x, rocket.current.y, 0, rocket.current.x, rocket.current.y, 30);
       glow.addColorStop(0, 'rgba(239, 68, 68, 0.8)');
       glow.addColorStop(1, 'rgba(239, 68, 68, 0)');
       ctx.fillStyle = glow;
       ctx.beginPath();
-      ctx.arc(rocket.current.x, rocket.current.y, 6, 0, Math.PI * 2);
+      ctx.arc(rocket.current.x, rocket.current.y, 30, 0, Math.PI * 2);
       ctx.fill();
     });
 
@@ -500,8 +515,10 @@ export default function App() {
     <div className="relative w-full h-screen bg-black overflow-hidden font-sans">
       <canvas
         ref={canvasRef}
-        onMouseDown={handleCanvasClick}
-        onTouchStart={handleCanvasClick}
+        onMouseMove={handleCanvasInteraction}
+        onTouchMove={handleCanvasInteraction}
+        onMouseDown={handleCanvasInteraction}
+        onTouchStart={handleCanvasInteraction}
         className="cursor-crosshair"
       />
 
@@ -534,12 +551,9 @@ export default function App() {
                 {tower.id === 1 ? '中央火力' : tower.id === 0 ? '左翼防线' : '右翼防线'}
               </div>
               <div className="flex items-end gap-2">
-                <div className={`text-2xl font-bold font-mono ${tower.ammo < 5 ? 'text-red-500 animate-pulse' : 'text-white'}`}>
-                  {tower.destroyed ? 'OFFLINE' : tower.ammo}
+                <div className="text-2xl font-bold font-mono text-white">
+                  {tower.destroyed ? 'OFFLINE' : '∞'}
                 </div>
-                {!tower.destroyed && (
-                  <div className="text-[10px] text-white/30 mb-1">/ {tower.maxAmmo}</div>
-                )}
               </div>
             </div>
           ))}
@@ -612,7 +626,7 @@ export default function App() {
                 <div className="bg-white/5 p-6 rounded-3xl border border-white/10 backdrop-blur-sm">
                   <RocketIcon className="w-8 h-8 text-violet-400 mb-3 mx-auto" />
                   <div className="text-lg font-bold mb-1">终极脉冲</div>
-                  <div className="text-sm text-white/40">全屏清场，仅限3次</div>
+                  <div className="text-sm text-white/40">全屏清场，仅限99次</div>
                 </div>
                 <div className="bg-white/5 p-6 rounded-3xl border border-white/10 backdrop-blur-sm">
                   <Trophy className="w-8 h-8 text-yellow-400 mb-3 mx-auto" />
